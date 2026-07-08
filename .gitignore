@@ -1,0 +1,17 @@
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# SQLite 数据库文件(数据是本地私有的,不进版本库)
+*.db
+media.db
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 编辑器 / IDE
+.vscode/
+.idea/
+.DS_Store

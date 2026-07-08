@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block content %}
+
+{# ---------- 添加表单 ---------- #}
+<section class="card">
+  <h2>添加记录</h2>
+  <form action="{{ url_for('add') }}" method="post" class="record-form">
+    <div class="field">
+      <label>标题</label>
+      <input type="text" name="title" required autofocus>
+    </div>
+
+    <div class="field">
+      <label>类型</label>
+      <select name="category">
+        {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+      </select>
+    </div>
+
+    <div class="field">
+      <label>状态</label>
+      <select name="status">
+        {% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+      </select>
+    </div>
+
+    <div class="field">
+      <label>评分(1-5,可留空)</label>
+      <input type="number" name="rating" min="1" max="5" placeholder="—">
+    </div>
+
+    <div class="field">
+      <label>添加日期</label>
+      <input type="date" name="added_date" value="{{ today }}">
+    </div>
+
+    <div class="field field-wide">
+      <label>短评(可留空)</label>
+      <textarea name="comment" rows="2"></textarea>
+    </div>
+
+    <div class="field">
+      <button type="submit">添加</button>
+    </div>
+  </form>
+</section>
+
+{# ---------- 筛选 / 排序 / 搜索栏 ---------- #}
+{# 用 GET 提交,条件会进入 URL 查询参数,刷新或分享链接都能保留 #}
+<section class="card">
+  <form method="get" action="{{ url_for('index') }}" class="filter-bar">
+    <div class="field">
+      <label>类型</label>
+      <select name="category">
+        <option value="">全部</option>
+        {% for c in categories %}
+          <option value="{{ c }}" {% if c == current.category %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="field">
+      <label>状态</label>
+      <select name="status">
+        <option value="">全部</option>
+        {% for s in statuses %}
+          <option value="{{ s }}" {% if s == current.status %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="field">
+      <label>排序</label>
+      <select name="sort">
+        <option value="added"  {% if current.sort == 'added'  %}selected{% endif %}>添加时间</option>
+        <option value="rating" {% if current.sort == 'rating' %}selected{% endif %}>评分</option>
+        <option value="title"  {% if current.sort == 'title'  %}selected{% endif %}>标题</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>方向</label>
+      <select name="order">
+        <option value="desc" {% if current.order == 'desc' %}selected{% endif %}>倒序</option>
+        <option value="asc"  {% if current.order == 'asc'  %}selected{% endif %}>正序</option>
+      </select>
+    </div>
+
+    <div class="field field-grow">
+      <label>搜索标题</label>
+      <input type="search" name="q" value="{{ current.q }}" placeholder="输入关键词,不区分大小写">
+    </div>
+
+    <div class="field field-actions">
+      <button type="submit">应用</button>
+      <a href="{{ url_for('index') }}" class="cancel">重置</a>
+    </div>
+  </form>
+</section>
+
+{# ---------- 记录列表 ---------- #}
+<section class="card">
+  <h2>记录（{{ records|length }}）</h2>
+
+  {% if records %}
+  <table>
+    <thead>
+      <tr>
+        <th>标题</th>
+        <th>类型</th>
+        <th>状态</th>
+        <th>评分</th>
+        <th>短评</th>
+        <th>添加日期</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in records %}
+      <tr>
+        <td>{{ r["title"] }}</td>
+        <td>{{ r["category"] }}</td>
+        <td>{{ r["status"] }}</td>
+        <td>{{ "★" * r["rating"] if r["rating"] else "—" }}</td>
+        <td>{{ r["comment"] or "—" }}</td>
+        <td>{{ r["added_date"] }}</td>
+        <td class="actions">
+          <a href="{{ url_for('edit', record_id=r['id']) }}">编辑</a>
+          <form action="{{ url_for('delete', record_id=r['id']) }}" method="post"
+                onsubmit="return confirm('确定删除《{{ r['title'] }}》吗？');">
+            <button type="submit" class="link-btn danger">删除</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% elif current.category or current.status or current.q %}
+  <p class="empty">没有符合当前筛选 / 搜索条件的记录。<a href="{{ url_for('index') }}">清除条件</a></p>
+  {% else %}
+  <p class="empty">还没有记录，用上面的表单添加第一条吧。</p>
+  {% endif %}
+</section>
+
+{% endblock %}

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}编辑记录{% endblock %}
+{% block content %}
+
+<section class="card">
+  <h2>编辑记录</h2>
+  <form action="{{ url_for('edit', record_id=record['id']) }}" method="post" class="record-form">
+    <div class="field">
+      <label>标题</label>
+      <input type="text" name="title" value="{{ record['title'] }}" required autofocus>
+    </div>
+
+    <div class="field">
+      <label>类型</label>
+      <select name="category">
+        {% for c in categories %}
+          <option value="{{ c }}" {% if c == record['category'] %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="field">
+      <label>状态</label>
+      <select name="status">
+        {% for s in statuses %}
+          <option value="{{ s }}" {% if s == record['status'] %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="field">
+      <label>评分(1-5,可留空)</label>
+      <input type="number" name="rating" min="1" max="5"
+             value="{{ record['rating'] if record['rating'] else '' }}">
+    </div>
+
+    <div class="field">
+      <label>添加日期</label>
+      <input type="date" name="added_date" value="{{ record['added_date'] }}">
+    </div>
+
+    <div class="field field-wide">
+      <label>短评(可留空)</label>
+      <textarea name="comment" rows="2">{{ record['comment'] or '' }}</textarea>
+    </div>
+
+    <div class="field">
+      <button type="submit">保存</button>
+      <a href="{{ url_for('index') }}" class="cancel">取消</a>
+    </div>
+  </form>
+</section>
+
+{% endblock %}
