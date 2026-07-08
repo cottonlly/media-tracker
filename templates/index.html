@@ -9,8 +9,9 @@
       <label>标题</label>
       <div class="title-row">
         <input type="text" id="f-title" name="title" required autofocus>
-        {# 电影 / 剧集可点此从 TMDB 搜索并自动补全,点选后各字段仍可手改 #}
-        <button type="button" id="tmdb-search-btn" class="secondary">搜索 TMDB</button>
+        {# 先选类型,再点这里按类型自动搜索并补全(电影/剧集→TMDB,书→Open Library,动画→Bangumi);
+           点选结果后各字段仍可手改。游戏暂不支持自动搜索。 #}
+        <button type="button" id="search-btn" class="secondary">搜索</button>
       </div>
     </div>
 
@@ -178,12 +179,13 @@
   {% endif %}
 </section>
 
-{# ---------- 「搜索 TMDB」交互(纯原生 JS,无框架) ---------- #}
+{# ---------- 自动补全搜索交互(纯原生 JS,无框架) ---------- #}
 <script>
 (function () {
-  const btn = document.getElementById('tmdb-search-btn');
+  const btn = document.getElementById('search-btn');
   if (!btn) return;
   const titleInput = document.getElementById('f-title');
+  const categorySel = document.getElementById('f-category');
   const statusEl = document.getElementById('tmdb-status');
   const resultsEl = document.getElementById('tmdb-results');
 
@@ -258,9 +260,10 @@
   btn.addEventListener('click', function () {
     const q = titleInput.value.trim();
     if (!q) { setStatus('请先在标题里输入要搜索的名称'); return; }
-    setStatus('正在搜索 TMDB…');
+    const category = categorySel.value;
+    setStatus('正在搜索「' + category + '」…');
     resultsEl.hidden = true;
-    fetch('/api/tmdb-search?q=' + encodeURIComponent(q))
+    fetch('/api/search?q=' + encodeURIComponent(q) + '&category=' + encodeURIComponent(category))
       .then(function (resp) {
         return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
       })

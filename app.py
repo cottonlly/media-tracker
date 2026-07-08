@@ -1,4 +1,4 @@
-"""个人观影 / 追番 / 读书记录 —— Flask 应用主文件 (v1.3)。
+"""个人观影 / 追番 / 读书记录 —— Flask 应用主文件 (v1.4)。
 
 功能:
   - 首页展示添加表单 + 记录列表
@@ -6,8 +6,9 @@
     按标题模糊搜索;条件可叠加,并保存在 URL 查询参数里
   - 统计页(/stats):汇总数字 + 三张图表(类型分布 / 评分分布 / 每月看完),
     数据在 SQL 里聚合,前端用 Chart.js 渲染
-  - 添加时可「搜索 TMDB」(电影 / 剧集)自动补全标题、年份、简介、海报;
-    密钥只在后端使用,从环境变量读取(见 /api/tmdb-search)
+  - 添加时按类型自动补全(见 /api/search):电影/剧集→TMDB、书→Open Library、
+    动画→Bangumi,补全标题、年份、简介、封面;所有外部请求都在后端发起,
+    密钥只从环境变量读取,前端拿不到
   - 新增 / 编辑 / 删除记录
   - 数据存在本地 SQLite 文件 media.db
 
@@ -19,6 +20,7 @@
 import os
 from datetime import date
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 from dotenv import load_dotenv
@@ -51,15 +53,30 @@ SORT_COLUMNS = {
 }
 
 # ---------------------------------------------------------------------------
-# TMDB 配置。密钥只从环境变量读取,绝不硬编码;.env 文件由 python-dotenv 加载。
-# 请求全部在后端发起,前端拿不到密钥(见 /api/tmdb-search)。
+# 自动补全 / 搜索:各数据源配置。所有外部请求都在后端发起(见 /api/search),
+# 前端只调用本站接口、拿不到任何密钥。密钥只从环境变量读取,.env 由 dotenv 加载。
 # ---------------------------------------------------------------------------
 load_dotenv(Path(__file__).parent / ".env")  # 从项目根目录的 .env 读取
+
+SEARCH_TIMEOUT = 6         # 请求外部 API 的超时(秒)
+SEARCH_RESULT_LIMIT = 10   # 每次最多返回给前端的结果条数
+
+# TMDB(电影 / 剧集):需要密钥,支持 v3 API Key 或 v4 Read Access Token
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "").strip()
 TMDB_API_BASE = "https://api.themoviedb.org/3"
 TMDB_IMG_BASE = "https://image.tmdb.org/t/p/"  # 后接尺寸(如 w92)+ poster_path
-TMDB_TIMEOUT = 6           # 请求 TMDB 的超时(秒)
-TMDB_RESULT_LIMIT = 10     # 最多返回给前端的结果条数
+
+# 标识本应用的 User-Agent。Bangumi 强制要求带上(否则可能被拒),Open Library 也建议带。
+# 格式按 Bangumi 要求:用户名/项目名 (仓库地址)。
+APP_USER_AGENT = "cottonlly/media-tracker (https://github.com/cottonlly/media-tracker)"
+
+# Open Library(书):免费、无需 key / 无需认证
+OPENLIBRARY_SEARCH = "https://openlibrary.org/search.json"
+OPENLIBRARY_COVER = "https://covers.openlibrary.org/b/id/"  # 后接 {cover_i}-{尺寸}.jpg
+
+# Bangumi(动画):公开 API、搜索无需 token
+BANGUMI_SEARCH = "https://api.bgm.tv/search/subject/"  # 后接 URL 编码后的关键词
+BANGUMI_TYPE_ANIME = 2     # Bangumi 条目类型:2 = 动画
 
 app = Flask(__name__)
 # flash 提示消息依赖 session,需要一个密钥。生产环境请换成随机值。
@@ -138,6 +155,13 @@ def parse_form(form):
     return data, errors
 
 
+class SearchError(Exception):
+    """数据源返回的、可直接展示给用户的可预期错误(如关键词太短)。
+
+    路由捕获它后原样把消息返回给前端(400),区别于网络 / 超时等技术性错误。
+    """
+
+
 def _tmdb_auth():
     """按密钥形态返回 (额外 query 参数, 额外请求头)。
 
@@ -173,7 +197,7 @@ def search_tmdb(query):
                 "include_adult": "false",
             },
             headers=auth_headers,
-            timeout=TMDB_TIMEOUT,
+            timeout=SEARCH_TIMEOUT,
         )
         resp.raise_for_status()  # 401(密钥错) / 5xx 等在此抛 RequestException
         for item in resp.json().get("results", []):
@@ -192,7 +216,92 @@ def search_tmdb(query):
 
     # 电影和剧集混在一起按热度降序,取前 N 条
     found.sort(key=lambda r: r["popularity"], reverse=True)
-    return found[:TMDB_RESULT_LIMIT]
+    return found[:SEARCH_RESULT_LIMIT]
+
+
+def search_openlibrary(query):
+    """在 Open Library 搜索图书(书)。免费、无需 key。
+
+    返回结果的字段结构与 search_tmdb 保持一致,便于前端统一展示 / 回填。
+    """
+    resp = requests.get(
+        OPENLIBRARY_SEARCH,
+        params={
+            "q": query,
+            "limit": SEARCH_RESULT_LIMIT,
+            # 只取需要的字段,减小响应体
+            "fields": "title,first_publish_year,cover_i,author_name,first_sentence",
+        },
+        headers={"User-Agent": APP_USER_AGENT},
+        timeout=SEARCH_TIMEOUT,
+    )
+    # Open Library 要求关键词至少 3 个字符,过短会返回 422,给出明确提示
+    if resp.status_code == 422:
+        raise SearchError("Open Library 要求关键词至少 3 个字符,请把书名写长一点或改用英文名")
+    resp.raise_for_status()
+    found = []
+    for doc in resp.json().get("docs", []):
+        cover_id = doc.get("cover_i")
+        authors = doc.get("author_name") or []
+        # first_sentence 可能是字符串或数组;没有则退回用作者名当简介
+        sentence = doc.get("first_sentence")
+        if isinstance(sentence, list):
+            sentence = sentence[0] if sentence else ""
+        overview = sentence or ("作者:" + "、".join(authors) if authors else "")
+        year = doc.get("first_publish_year")
+        found.append({
+            "title": doc.get("title") or "",
+            "year": str(year) if year else "",
+            "media_type": "书",
+            "overview": overview or "",
+            "poster_thumb": f"{OPENLIBRARY_COVER}{cover_id}-S.jpg" if cover_id else "",
+            "poster_url": f"{OPENLIBRARY_COVER}{cover_id}-M.jpg" if cover_id else "",
+        })
+    return found[:SEARCH_RESULT_LIMIT]
+
+
+def search_bangumi(query):
+    """在 Bangumi 搜索动画条目。公开接口、搜索无需 token。
+
+    Bangumi 要求带上能标识调用方的 User-Agent,否则可能被拒绝(见 BANGUMI_USER_AGENT)。
+    取中文标题(name_cn,缺失回退原名)、简介、封面图。字段结构与 search_tmdb 一致。
+    """
+    resp = requests.get(
+        BANGUMI_SEARCH + quote(query),
+        params={"type": BANGUMI_TYPE_ANIME, "responseGroup": "large",
+                "max_results": SEARCH_RESULT_LIMIT},
+        headers={"User-Agent": APP_USER_AGENT, "Accept": "application/json"},
+        timeout=SEARCH_TIMEOUT,
+    )
+    resp.raise_for_status()
+    # 无结果时 Bangumi 可能返回 {"results":0} 而没有 list 字段
+    items = resp.json().get("list") or []
+    found = []
+    for item in items:
+        images = item.get("images") or {}
+        year = (item.get("air_date") or "")[:4]
+        thumb = images.get("grid") or images.get("small") or ""
+        poster = images.get("common") or images.get("medium") or images.get("large") or ""
+        found.append({
+            "title": item.get("name_cn") or item.get("name") or "",
+            "year": year,
+            "media_type": "动画",
+            "overview": item.get("summary") or "",
+            # Bangumi 返回的是 http:// 图片,升级到 https 以免将来 HTTPS 部署时被拦
+            "poster_thumb": thumb.replace("http://", "https://", 1),
+            "poster_url": poster.replace("http://", "https://", 1),
+        })
+    return found[:SEARCH_RESULT_LIMIT]
+
+
+# 记录类型 -> (搜索函数, 数据源展示名)。前端按用户选的类型来这里查该调哪个 API。
+# 未列出的类型(如「游戏」)= 暂不支持自动搜索,保持纯手动填写。
+SEARCH_PROVIDERS = {
+    "电影": (search_tmdb, "TMDB"),
+    "剧集": (search_tmdb, "TMDB"),
+    "书": (search_openlibrary, "Open Library"),
+    "动画": (search_bangumi, "Bangumi"),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -339,30 +448,45 @@ def stats():
     )
 
 
-@app.route("/api/tmdb-search")
-def tmdb_search():
-    """给前端「搜索 TMDB」按钮用的 JSON 接口。
+@app.route("/api/search")
+def search():
+    """自动补全搜索接口:按记录类型分发到对应数据源。
 
-    密钥只在后端使用;搜不到、请求失败或超时都转成友好的 JSON 错误 + 合适的
-    HTTP 状态码返回,由前端展示提示,绝不让整个页面崩掉。
+    前端把用户选好的类型(category)和关键词(q)传进来,后端据此决定调哪个 API
+    (TMDB / Open Library / Bangumi)。所有外部请求都在后端发起,前端拿不到密钥。
+    任一数据源搜不到、超时或报错都转成友好的 JSON 错误(带数据源名),页面不崩。
     """
     query = request.args.get("q", "").strip()
+    category = request.args.get("category", "").strip()
     if not query:
         return jsonify({"error": "请先输入标题再搜索"}), 400
-    if not TMDB_API_KEY:
+
+    provider = SEARCH_PROVIDERS.get(category)
+    if provider is None:
+        # 游戏 / 未知类型:暂不支持自动搜索
+        return jsonify(
+            {"error": f"「{category or '该类型'}」暂不支持自动搜索,请手动填写"}
+        ), 400
+    search_func, source = provider
+
+    # 只有 TMDB(电影 / 剧集)需要密钥,其它数据源免密钥
+    if search_func is search_tmdb and not TMDB_API_KEY:
         return jsonify(
             {"error": "尚未配置 TMDB 密钥:请在 .env 里设置 TMDB_API_KEY 后重启"}
         ), 503
 
     try:
-        results = search_tmdb(query)
+        results = search_func(query)
+    except SearchError as e:
+        # 可预期的、可直接展示的问题(如关键词太短)
+        return jsonify({"error": str(e)}), 400
     except requests.Timeout:
-        return jsonify({"error": "请求 TMDB 超时,请稍后重试"}), 504
+        return jsonify({"error": f"{source} 搜索超时,请稍后重试"}), 504
     except requests.RequestException:
-        # 网络错误、密钥无效(401)、TMDB 5xx 等都归到这里
-        return jsonify({"error": "请求 TMDB 失败,请检查网络连接或密钥是否正确"}), 502
+        # 网络错误、密钥无效、对方 5xx、返回非 JSON 等都归到这里
+        return jsonify({"error": f"{source} 搜索失败,请检查网络后重试"}), 502
 
-    return jsonify({"results": results})
+    return jsonify({"results": results, "source": source})
 
 
 @app.route("/add", methods=["POST"])
