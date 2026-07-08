@@ -127,51 +127,54 @@
   </form>
 </section>
 
-{# ---------- 记录列表 ---------- #}
-<section class="card">
-  <h2>记录（{{ records|length }}）</h2>
+{# ---------- 记录海报墙 ---------- #}
+{# 状态 -> 标签样式类;类型 -> 无封面时占位块的底色。都在模板里映射,方便调整。 #}
+{% set status_class = {'想看': 'want', '在看': 'watching', '看完': 'done'} %}
+{% set ph_colors = {'动画': '#7c6cc4', '电影': '#4f7fd1', '剧集': '#3fa796', '书': '#c08a4e', '游戏': '#cf6b6b'} %}
+<section class="records">
+  <div class="records-head">
+    <h2>记录</h2>
+    <span class="count">{{ records|length }}</span>
+  </div>
 
   {% if records %}
-  <table>
-    <thead>
-      <tr>
-        <th>海报</th>
-        <th>标题</th>
-        <th>类型</th>
-        <th>状态</th>
-        <th>评分</th>
-        <th>短评</th>
-        <th>添加日期</th>
-        <th>操作</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for r in records %}
-      <tr>
-        <td>
-          {% if r["poster_url"] %}
-            <img class="poster-thumb" src="{{ r['poster_url'] }}" alt="{{ r['title'] }} 海报">
-          {% else %}—{% endif %}
-        </td>
-        <td>
-          {{ r["title"] }}{% if r["year"] %} <span class="muted">({{ r["year"] }})</span>{% endif %}
-        </td>
-        <td>{{ r["category"] }}</td>
-        <td>{{ r["status"] }}</td>
-        <td>{{ "★" * r["rating"] if r["rating"] else "—" }}</td>
-        <td>{{ r["comment"] or "—" }}</td>
-        <td>{{ r["added_date"] }}</td>
-        <td class="actions">
-          <a href="{{ url_for('edit', record_id=r['id']) }}">编辑</a>
-          <form action="{{ url_for('delete', record_id=r['id']) }}" method="post"
-                onsubmit="return confirm('确定删除《{{ r['title'] }}》吗？');">
-            <button type="submit" class="link-btn danger">删除</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="grid">
+    {% for r in records %}
+    <article class="movie-card">
+      {# 覆盖整卡的透明链接:点卡片任意处进入编辑(删除按钮层级更高,不受影响) #}
+      <a class="card-link" href="{{ url_for('edit', record_id=r['id']) }}" aria-label="查看 / 编辑《{{ r['title'] }}》"></a>
+
+      <div class="cover">
+        {% if r['poster_url'] %}
+          <img src="{{ r['poster_url'] }}" alt="{{ r['title'] }} 封面" loading="lazy">
+        {% else %}
+          {# 无封面:纯色块 + 标题首字,避免裂图 #}
+          <div class="cover-ph" style="background: {{ ph_colors.get(r['category'], '#8a8f98') }}">{{ r['title'][:1] }}</div>
+        {% endif %}
+      </div>
+
+      <div class="card-body">
+        <h3 class="card-title" title="{{ r['title'] }}">{{ r['title'] }}</h3>
+        <div class="card-meta">
+          <span>{{ r['category'] }}</span>
+          {% if r['year'] %}<span>·</span><span>{{ r['year'] }}</span>{% endif %}
+        </div>
+        <div class="card-foot">
+          <span class="stars {% if not r['rating'] %}none{% endif %}"
+                title="{{ (r['rating']|string) ~ ' 分' if r['rating'] else '未评分' }}">
+            {%- for i in range(1, 6) %}{{ '★' if (r['rating'] and i <= r['rating']) else '☆' }}{% endfor -%}
+          </span>
+          <span class="badge {{ status_class.get(r['status'], '') }}">{{ r['status'] }}</span>
+        </div>
+      </div>
+
+      <form class="card-del-form" action="{{ url_for('delete', record_id=r['id']) }}" method="post"
+            onsubmit="return confirm('确定删除《{{ r['title'] }}》吗？');">
+        <button type="submit" class="card-del" title="删除" aria-label="删除《{{ r['title'] }}》">✕</button>
+      </form>
+    </article>
+    {% endfor %}
+  </div>
   {% elif current.category or current.status or current.q %}
   <p class="empty">没有符合当前筛选 / 搜索条件的记录。<a href="{{ url_for('index') }}">清除条件</a></p>
   {% else %}

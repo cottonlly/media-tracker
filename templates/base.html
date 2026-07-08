@@ -8,13 +8,14 @@
 </head>
 <body>
   <div class="container">
-    <h1><a href="{{ url_for('index') }}">📺 我的观影 / 追番 / 读书记录</a></h1>
-
-    {# 顶部导航:列表 <-> 统计 互相跳转,当前页高亮 #}
-    <nav class="nav">
-      <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">列表</a>
-      <a href="{{ url_for('stats') }}" class="{% if request.endpoint == 'stats' %}active{% endif %}">统计</a>
-    </nav>
+    {# 顶部栏:站名在左,导航在右;窄屏自动换行 #}
+    <header class="topbar">
+      <h1><a href="{{ url_for('index') }}">🎬 我的记录墙</a></h1>
+      <nav class="nav">
+        <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">列表</a>
+        <a href="{{ url_for('stats') }}" class="{% if request.endpoint == 'stats' %}active{% endif %}">统计</a>
+      </nav>
+    </header>
 
     {# 操作反馈消息(添加成功、删除成功、校验错误等) #}
     {% with messages = get_flashed_messages(with_categories=true) %}
