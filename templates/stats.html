@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}统计 · 我的观影 / 追番 / 读书记录{% endblock %}
+{% block content %}
+
+{# ---------- 顶部汇总卡片 ---------- #}
+<section class="stat-cards">
+  <div class="stat-card">
+    <div class="stat-num">{{ summary.total }}</div>
+    <div class="stat-label">记录总数</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-num">{{ summary.completed }}</div>
+    <div class="stat-label">已看完</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-num">{{ summary.completed_this_year }}</div>
+    <div class="stat-label">{{ summary.year }} 年看完</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-num">
+      {% if summary.avg_rating is not none %}{{ "%.1f"|format(summary.avg_rating) }}{% else %}—{% endif %}
+    </div>
+    <div class="stat-label">平均评分</div>
+  </div>
+</section>
+
+{% if summary.total == 0 %}
+<section class="card">
+  <p class="empty">还没有任何记录，先去<a href="{{ url_for('index') }}">添加几条</a>再来看统计吧。</p>
+</section>
+{% endif %}
+
+{# ---------- 三张图表 ---------- #}
+<section class="card">
+  <h2>各类型数量{% if not category_values %} <span class="muted">(暂无数据)</span>{% endif %}</h2>
+  <div class="chart-box"><canvas id="categoryChart"></canvas></div>
+</section>
+
+<section class="card">
+  <h2>评分分布</h2>
+  <div class="chart-box"><canvas id="ratingChart"></canvas></div>
+</section>
+
+<section class="card">
+  <h2>每月看完数量{% if not month_values %} <span class="muted">(暂无数据)</span>{% endif %}</h2>
+  <div class="chart-box"><canvas id="monthChart"></canvas></div>
+</section>
+
+{# Chart.js 用 CDN 引入,不需要构建工具 #}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+  // 数据已由后端在 SQL 里聚合好,这里只负责画图。
+  // tojson 会把 Python 列表安全地转成 JS 字面量(自动转义,防 XSS)。
+  const categoryLabels = {{ category_labels | tojson }};
+  const categoryValues = {{ category_values | tojson }};
+  const ratingLabels   = {{ rating_labels | tojson }};
+  const ratingValues   = {{ rating_values | tojson }};
+  const monthLabels    = {{ month_labels | tojson }};
+  const monthValues    = {{ month_values | tojson }};
+
+  // 一组够用的配色
+  const palette = ['#2f6fed', '#e8710a', '#1e9e6a', '#c0392b', '#8e44ad', '#16a085'];
+
+  // 柱状图通用配置:纵轴从 0 开始、只显示整数刻度、隐藏图例
+  const barOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+  };
+
+  // 图1:各类型数量(环形图)
+  new Chart(document.getElementById('categoryChart'), {
+    type: 'doughnut',
+    data: { labels: categoryLabels,
+            datasets: [{ data: categoryValues, backgroundColor: palette }] },
+    options: { responsive: true, maintainAspectRatio: false,
+               plugins: { legend: { position: 'right' } } },
+  });
+
+  // 图2:评分分布(柱状图)
+  new Chart(document.getElementById('ratingChart'), {
+    type: 'bar',
+    data: { labels: ratingLabels,
+            datasets: [{ label: '记录数', data: ratingValues, backgroundColor: '#2f6fed' }] },
+    options: barOptions,
+  });
+
+  // 图3:每月看完数量(柱状图)
+  new Chart(document.getElementById('monthChart'), {
+    type: 'bar',
+    data: { labels: monthLabels,
+            datasets: [{ label: '看完数', data: monthValues, backgroundColor: '#1e9e6a' }] },
+    options: barOptions,
+  });
+</script>
+
+{% endblock %}

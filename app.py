@@ -1,9 +1,11 @@
-"""个人观影 / 追番 / 读书记录 —— Flask 应用主文件 (v1.1)。
+"""个人观影 / 追番 / 读书记录 —— Flask 应用主文件 (v1.2)。
 
 功能:
   - 首页展示添加表单 + 记录列表
   - 列表支持筛选(类型 / 状态)、排序(添加时间 / 评分 / 标题,正倒序)、
     按标题模糊搜索;条件可叠加,并保存在 URL 查询参数里
+  - 统计页(/stats):汇总数字 + 三张图表(类型分布 / 评分分布 / 每月看完),
+    数据在 SQL 里聚合,前端用 Chart.js 渲染
   - 新增 / 编辑 / 删除记录
   - 数据存在本地 SQLite 文件 media.db
 
@@ -31,6 +33,7 @@ from db import close_db, get_db, init_db
 # ---------------------------------------------------------------------------
 CATEGORIES = ["动画", "电影", "剧集", "书", "游戏"]
 STATUSES = ["想看", "在看", "看完"]
+STATUS_DONE = "看完"  # 「看完」状态字面量,统计页多处引用,抽出来避免散落的魔法字符串
 
 # 允许的排序方式:URL 参数值 -> 对应的 SQL 排序表达式。
 # ORDER BY 不能用参数占位符,只能拼字符串,所以必须用白名单防止 SQL 注入。
@@ -165,6 +168,81 @@ def index():
             "sort": sort,
             "order": order,
         },
+    )
+
+
+@app.route("/stats")
+def stats():
+    """统计页:顶部汇总数字 + 三张图表的数据。
+
+    所有统计都在 SQL 里聚合完成,只把算好的小结果传给前端 Chart.js,
+    不会把原始记录整表丢到浏览器再算。数据库为空 / 某类数据为零时,
+    对应数字自然为 0、图表数据为空,页面照常渲染不报错。
+    """
+    db = get_db()
+    year = str(date.today().year)  # 当前年份,形如 "2026"
+
+    # --- 顶部卡片:四个汇总数字,一条查询算完 ---
+    row = db.execute(
+        "SELECT "
+        "  COUNT(*) AS total, "
+        "  COALESCE(SUM(CASE WHEN status = :done THEN 1 ELSE 0 END), 0) AS completed, "
+        "  COALESCE(SUM(CASE WHEN status = :done "
+        "                     AND strftime('%Y', added_date) = :year "
+        "                    THEN 1 ELSE 0 END), 0) AS completed_this_year, "
+        "  AVG(rating) AS avg_rating "  # 只对非空 rating 求平均;无评分时返回 NULL
+        "FROM records",
+        {"done": STATUS_DONE, "year": year},
+    ).fetchone()
+
+    summary = {
+        "total": row["total"],
+        "completed": row["completed"],
+        "completed_this_year": row["completed_this_year"],
+        # None 表示暂无评分,模板里显示「—」;有值则模板用 %.1f 保留一位小数
+        "avg_rating": row["avg_rating"],
+        "year": year,
+    }
+
+    # --- 图1:各类型数量(按 CATEGORIES 固定顺序,只保留有数据的类型) ---
+    cat_counts = {
+        r["category"]: r["n"]
+        for r in db.execute(
+            "SELECT category, COUNT(*) AS n FROM records GROUP BY category"
+        ).fetchall()
+    }
+    category_labels = [c for c in CATEGORIES if cat_counts.get(c)]
+    category_values = [cat_counts[c] for c in category_labels]
+
+    # --- 图2:评分分布 1-5(补齐缺失分档为 0,保证 5 根柱子都在) ---
+    rating_counts = {
+        r["rating"]: r["n"]
+        for r in db.execute(
+            "SELECT rating, COUNT(*) AS n FROM records "
+            "WHERE rating IS NOT NULL GROUP BY rating"
+        ).fetchall()
+    }
+    rating_labels = ["1 分", "2 分", "3 分", "4 分", "5 分"]
+    rating_values = [rating_counts.get(i, 0) for i in range(1, 6)]
+
+    # --- 图3:按月统计「看完」数量(横轴月份,只列有数据的月份,按时间升序) ---
+    month_rows = db.execute(
+        "SELECT strftime('%Y-%m', added_date) AS ym, COUNT(*) AS n FROM records "
+        "WHERE status = :done GROUP BY ym ORDER BY ym",
+        {"done": STATUS_DONE},
+    ).fetchall()
+    month_labels = [r["ym"] for r in month_rows]
+    month_values = [r["n"] for r in month_rows]
+
+    return render_template(
+        "stats.html",
+        summary=summary,
+        category_labels=category_labels,
+        category_values=category_values,
+        rating_labels=rating_labels,
+        rating_values=rating_values,
+        month_labels=month_labels,
+        month_values=month_values,
     )
 
 
