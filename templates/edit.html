@@ -35,8 +35,30 @@
     </div>
 
     <div class="field">
+      <label>年份(可留空)</label>
+      <input type="number" name="year" min="1800" max="2100"
+             value="{{ record['year'] if record['year'] else '' }}">
+    </div>
+
+    <div class="field">
       <label>添加日期</label>
       <input type="date" name="added_date" value="{{ record['added_date'] }}">
+    </div>
+
+    <div class="field field-wide">
+      <label>海报图 URL(可留空)</label>
+      <div class="poster-row">
+        <input type="url" name="poster_url" value="{{ record['poster_url'] or '' }}"
+               placeholder="可手动粘贴海报图片地址">
+        {% if record['poster_url'] %}
+          <img class="poster-preview" src="{{ record['poster_url'] }}" alt="海报预览">
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="field field-wide">
+      <label>简介(可留空)</label>
+      <textarea name="overview" rows="3">{{ record['overview'] or '' }}</textarea>
     </div>
 
     <div class="field field-wide">

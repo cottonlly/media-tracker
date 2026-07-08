@@ -1,4 +1,4 @@
-"""个人观影 / 追番 / 读书记录 —— Flask 应用主文件 (v1.2)。
+"""个人观影 / 追番 / 读书记录 —— Flask 应用主文件 (v1.3)。
 
 功能:
   - 首页展示添加表单 + 记录列表
@@ -6,6 +6,8 @@
     按标题模糊搜索;条件可叠加,并保存在 URL 查询参数里
   - 统计页(/stats):汇总数字 + 三张图表(类型分布 / 评分分布 / 每月看完),
     数据在 SQL 里聚合,前端用 Chart.js 渲染
+  - 添加时可「搜索 TMDB」(电影 / 剧集)自动补全标题、年份、简介、海报;
+    密钥只在后端使用,从环境变量读取(见 /api/tmdb-search)
   - 新增 / 编辑 / 删除记录
   - 数据存在本地 SQLite 文件 media.db
 
@@ -14,12 +16,17 @@
 然后浏览器打开 http://127.0.0.1:5000
 """
 
+import os
 from datetime import date
+from pathlib import Path
 
+import requests
+from dotenv import load_dotenv
 from flask import (
     Flask,
     abort,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -42,6 +49,17 @@ SORT_COLUMNS = {
     "rating": "rating",           # 评分
     "title": "title",             # 标题
 }
+
+# ---------------------------------------------------------------------------
+# TMDB 配置。密钥只从环境变量读取,绝不硬编码;.env 文件由 python-dotenv 加载。
+# 请求全部在后端发起,前端拿不到密钥(见 /api/tmdb-search)。
+# ---------------------------------------------------------------------------
+load_dotenv(Path(__file__).parent / ".env")  # 从项目根目录的 .env 读取
+TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "").strip()
+TMDB_API_BASE = "https://api.themoviedb.org/3"
+TMDB_IMG_BASE = "https://image.tmdb.org/t/p/"  # 后接尺寸(如 w92)+ poster_path
+TMDB_TIMEOUT = 6           # 请求 TMDB 的超时(秒)
+TMDB_RESULT_LIMIT = 10     # 最多返回给前端的结果条数
 
 app = Flask(__name__)
 # flash 提示消息依赖 session,需要一个密钥。生产环境请换成随机值。
@@ -71,6 +89,10 @@ def parse_form(form):
     comment = form.get("comment", "").strip()
     # 日期留空则默认今天
     added_date = form.get("added_date", "").strip() or date.today().isoformat()
+    # v1.3 新增字段(可来自 TMDB 自动填充,也可手动填/改)
+    year_raw = form.get("year", "").strip()
+    overview = form.get("overview", "").strip()
+    poster_url = form.get("poster_url", "").strip()
 
     errors = []
     if not title:
@@ -91,15 +113,86 @@ def parse_form(form):
         except ValueError:
             errors.append("评分必须是数字")
 
+    # 年份可留空;填了就必须是合理范围内的整数
+    year = None
+    if year_raw:
+        try:
+            year = int(year_raw)
+            if not 1800 <= year <= 2100:
+                errors.append("年份需在 1800-2100 之间")
+                year = None
+        except ValueError:
+            errors.append("年份必须是数字")
+
     data = {
         "title": title,
         "category": category,
         "status": status,
         "rating": rating,
-        "comment": comment or None,  # 空字符串存成 NULL
+        "comment": comment or None,      # 空字符串存成 NULL
         "added_date": added_date,
+        "year": year,
+        "overview": overview or None,
+        "poster_url": poster_url or None,
     }
     return data, errors
+
+
+def _tmdb_auth():
+    """按密钥形态返回 (额外 query 参数, 额外请求头)。
+
+    TMDB 有两种密钥,都能用于 v3 搜索接口,这里自动识别、填哪个都行:
+      - v3 API Key:32 位字符,作为 query 参数 api_key 传;
+      - v4 Read Access Token:JWT(含 '.'),作为 Bearer 放到 Authorization 头。
+    """
+    if "." in TMDB_API_KEY:  # v4 token 是 JWT,含点号
+        return {}, {"Authorization": f"Bearer {TMDB_API_KEY}"}
+    return {"api_key": TMDB_API_KEY}, {}
+
+
+def search_tmdb(query):
+    """在 TMDB 上搜索电影 + 剧集,合并、规范化后按热度返回前若干条。
+
+    仅在后端使用密钥发起请求;返回给前端的每条结果只含展示 / 回填所需字段,
+    不含密钥或多余原始数据。网络 / 超时等异常由调用方(路由)统一兜底处理。
+    """
+    auth_params, auth_headers = _tmdb_auth()
+    found = []
+    # (TMDB 接口路径, 归一到本项目的类型, 标题字段名, 首播/上映日期字段名)
+    endpoints = [
+        ("/search/movie", "电影", "title", "release_date"),
+        ("/search/tv", "剧集", "name", "first_air_date"),
+    ]
+    for path, cat, title_key, date_key in endpoints:
+        resp = requests.get(
+            TMDB_API_BASE + path,
+            params={
+                **auth_params,
+                "query": query,
+                "language": "zh-CN",       # 优先中文标题 / 简介
+                "include_adult": "false",
+            },
+            headers=auth_headers,
+            timeout=TMDB_TIMEOUT,
+        )
+        resp.raise_for_status()  # 401(密钥错) / 5xx 等在此抛 RequestException
+        for item in resp.json().get("results", []):
+            year = (item.get(date_key) or "")[:4]  # 日期形如 2010-07-16,取前四位
+            poster_path = item.get("poster_path")
+            found.append({
+                "title": item.get(title_key) or "",
+                "year": year,
+                "media_type": cat,                 # 电影 / 剧集(正好是下拉里的选项)
+                "overview": item.get("overview") or "",
+                # 小图给结果列表用,较大图存进记录
+                "poster_thumb": f"{TMDB_IMG_BASE}w92{poster_path}" if poster_path else "",
+                "poster_url": f"{TMDB_IMG_BASE}w342{poster_path}" if poster_path else "",
+                "popularity": item.get("popularity") or 0,
+            })
+
+    # 电影和剧集混在一起按热度降序,取前 N 条
+    found.sort(key=lambda r: r["popularity"], reverse=True)
+    return found[:TMDB_RESULT_LIMIT]
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +339,32 @@ def stats():
     )
 
 
+@app.route("/api/tmdb-search")
+def tmdb_search():
+    """给前端「搜索 TMDB」按钮用的 JSON 接口。
+
+    密钥只在后端使用;搜不到、请求失败或超时都转成友好的 JSON 错误 + 合适的
+    HTTP 状态码返回,由前端展示提示,绝不让整个页面崩掉。
+    """
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify({"error": "请先输入标题再搜索"}), 400
+    if not TMDB_API_KEY:
+        return jsonify(
+            {"error": "尚未配置 TMDB 密钥:请在 .env 里设置 TMDB_API_KEY 后重启"}
+        ), 503
+
+    try:
+        results = search_tmdb(query)
+    except requests.Timeout:
+        return jsonify({"error": "请求 TMDB 超时,请稍后重试"}), 504
+    except requests.RequestException:
+        # 网络错误、密钥无效(401)、TMDB 5xx 等都归到这里
+        return jsonify({"error": "请求 TMDB 失败,请检查网络连接或密钥是否正确"}), 502
+
+    return jsonify({"results": results})
+
+
 @app.route("/add", methods=["POST"])
 def add():
     """新增一条记录。"""
@@ -257,8 +376,10 @@ def add():
 
     db = get_db()
     db.execute(
-        "INSERT INTO records (title, category, status, rating, comment, added_date) "
-        "VALUES (:title, :category, :status, :rating, :comment, :added_date)",
+        "INSERT INTO records "
+        "  (title, category, status, rating, comment, added_date, year, overview, poster_url) "
+        "VALUES "
+        "  (:title, :category, :status, :rating, :comment, :added_date, :year, :overview, :poster_url)",
         data,
     )
     db.commit()
@@ -291,7 +412,8 @@ def edit(record_id):
 
         db.execute(
             "UPDATE records SET title=:title, category=:category, status=:status, "
-            "rating=:rating, comment=:comment, added_date=:added_date WHERE id=:id",
+            "rating=:rating, comment=:comment, added_date=:added_date, "
+            "year=:year, overview=:overview, poster_url=:poster_url WHERE id=:id",
             {**data, "id": record_id},
         )
         db.commit()

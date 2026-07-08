@@ -69,6 +69,74 @@ button {
 }
 button:hover { background: #2559c9; }
 
+/* 次要按钮(如「搜索 TMDB」) */
+button.secondary { background: #6b7280; white-space: nowrap; }
+button.secondary:hover { background: #565f6b; }
+
+/* 标题行:输入框 + 搜索按钮并排 */
+.title-row { display: flex; gap: 8px; }
+.title-row input { flex: 1; }
+
+/* 海报 URL 行:输入框 + 小预览图 */
+.poster-row { display: flex; gap: 10px; align-items: flex-start; }
+.poster-row input { flex: 1; }
+.poster-preview { width: 60px; height: auto; border-radius: 4px; border: 1px solid #e2e4e8; }
+
+/* TMDB 搜索:状态提示 + 结果列表 */
+.tmdb-status { font-size: 0.9rem; color: #555; margin-bottom: 8px; }
+.tmdb-results {
+  border: 1px solid #e2e4e8;
+  border-radius: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.tmdb-item {
+  display: flex;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+}
+.tmdb-item:last-child { border-bottom: none; }
+.tmdb-item:hover { background: #f0f5ff; }
+.tmdb-thumb { flex: 0 0 46px; width: 46px; height: 69px; }
+.tmdb-thumb img { width: 46px; height: 69px; object-fit: cover; border-radius: 3px; }
+.tmdb-thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f0f1f3;
+  color: #aaa;
+  font-size: 0.72rem;
+  border-radius: 3px;
+}
+.tmdb-meta { flex: 1; min-width: 0; }
+.tmdb-title { font-weight: 600; }
+.tmdb-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 0.72rem;
+  font-weight: normal;
+  color: #2f6fed;
+  background: #e8f0fe;
+  border-radius: 10px;
+  vertical-align: middle;
+}
+.tmdb-overview {
+  font-size: 0.82rem;
+  color: #666;
+  margin-top: 2px;
+  /* 简介最多显示两行,超出省略 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 列表里的海报缩略图 */
+.poster-thumb { width: 40px; height: 60px; object-fit: cover; border-radius: 3px; }
+
 /* 筛选 / 排序 / 搜索栏:一排控件,窄屏自动换行 */
 .filter-bar {
   display: flex;

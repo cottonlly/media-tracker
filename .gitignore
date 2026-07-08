@@ -3,6 +3,9 @@ venv/
 .venv/
 env/
 
+# 环境变量文件(含 TMDB 等密钥,绝不提交到版本库)
+.env
+
 # SQLite 数据库文件(数据是本地私有的,不进版本库)
 *.db
 media.db

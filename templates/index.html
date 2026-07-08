@@ -5,14 +5,24 @@
 <section class="card">
   <h2>添加记录</h2>
   <form action="{{ url_for('add') }}" method="post" class="record-form">
-    <div class="field">
+    <div class="field field-wide">
       <label>标题</label>
-      <input type="text" name="title" required autofocus>
+      <div class="title-row">
+        <input type="text" id="f-title" name="title" required autofocus>
+        {# 电影 / 剧集可点此从 TMDB 搜索并自动补全,点选后各字段仍可手改 #}
+        <button type="button" id="tmdb-search-btn" class="secondary">搜索 TMDB</button>
+      </div>
+    </div>
+
+    {# TMDB 搜索的状态提示与结果列表,由下方 JS 填充 #}
+    <div class="field field-wide">
+      <div id="tmdb-status" class="tmdb-status" hidden></div>
+      <div id="tmdb-results" class="tmdb-results" hidden></div>
     </div>
 
     <div class="field">
       <label>类型</label>
-      <select name="category">
+      <select id="f-category" name="category">
         {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
       </select>
     </div>
@@ -30,8 +40,26 @@
     </div>
 
     <div class="field">
+      <label>年份(可留空)</label>
+      <input type="number" id="f-year" name="year" min="1800" max="2100" placeholder="—">
+    </div>
+
+    <div class="field">
       <label>添加日期</label>
       <input type="date" name="added_date" value="{{ today }}">
+    </div>
+
+    <div class="field field-wide">
+      <label>海报图 URL(可留空)</label>
+      <div class="poster-row">
+        <input type="url" id="f-poster" name="poster_url" placeholder="搜索 TMDB 自动填入,也可手动粘贴">
+        <img id="f-poster-preview" class="poster-preview" alt="海报预览" hidden>
+      </div>
+    </div>
+
+    <div class="field field-wide">
+      <label>简介(可留空)</label>
+      <textarea id="f-overview" name="overview" rows="3"></textarea>
     </div>
 
     <div class="field field-wide">
@@ -106,6 +134,7 @@
   <table>
     <thead>
       <tr>
+        <th>海报</th>
         <th>标题</th>
         <th>类型</th>
         <th>状态</th>
@@ -118,7 +147,14 @@
     <tbody>
       {% for r in records %}
       <tr>
-        <td>{{ r["title"] }}</td>
+        <td>
+          {% if r["poster_url"] %}
+            <img class="poster-thumb" src="{{ r['poster_url'] }}" alt="{{ r['title'] }} 海报">
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          {{ r["title"] }}{% if r["year"] %} <span class="muted">({{ r["year"] }})</span>{% endif %}
+        </td>
         <td>{{ r["category"] }}</td>
         <td>{{ r["status"] }}</td>
         <td>{{ "★" * r["rating"] if r["rating"] else "—" }}</td>
@@ -141,5 +177,103 @@
   <p class="empty">还没有记录，用上面的表单添加第一条吧。</p>
   {% endif %}
 </section>
+
+{# ---------- 「搜索 TMDB」交互(纯原生 JS,无框架) ---------- #}
+<script>
+(function () {
+  const btn = document.getElementById('tmdb-search-btn');
+  if (!btn) return;
+  const titleInput = document.getElementById('f-title');
+  const statusEl = document.getElementById('tmdb-status');
+  const resultsEl = document.getElementById('tmdb-results');
+
+  function setStatus(msg) {
+    statusEl.textContent = msg || '';
+    statusEl.hidden = !msg;
+  }
+
+  function updatePreview(url) {
+    const prev = document.getElementById('f-poster-preview');
+    if (url) { prev.src = url; prev.hidden = false; }
+    else { prev.removeAttribute('src'); prev.hidden = true; }
+  }
+
+  // 点选一条结果:把各字段回填进表单(之后用户仍可手动修改)
+  function fillForm(item) {
+    titleInput.value = item.title || '';
+    if (item.media_type) document.getElementById('f-category').value = item.media_type;
+    document.getElementById('f-year').value = item.year || '';
+    document.getElementById('f-overview').value = item.overview || '';
+    document.getElementById('f-poster').value = item.poster_url || '';
+    updatePreview(item.poster_url || '');
+    resultsEl.hidden = true;
+    resultsEl.innerHTML = '';
+    setStatus('已填入《' + (item.title || '') + '》,可继续手动修改后保存。');
+  }
+
+  // 用 DOM API 构建结果(textContent 天然转义,避免把返回内容当 HTML 注入)
+  function renderResults(results) {
+    resultsEl.innerHTML = '';
+    results.forEach(function (item) {
+      const row = document.createElement('div');
+      row.className = 'tmdb-item';
+      row.addEventListener('click', function () { fillForm(item); });
+
+      const thumb = document.createElement('div');
+      thumb.className = 'tmdb-thumb';
+      if (item.poster_thumb) {
+        const img = document.createElement('img');
+        img.src = item.poster_thumb;
+        img.alt = '';
+        thumb.appendChild(img);
+      } else {
+        thumb.classList.add('tmdb-thumb-empty');
+        thumb.textContent = '无图';
+      }
+      row.appendChild(thumb);
+
+      const meta = document.createElement('div');
+      meta.className = 'tmdb-meta';
+
+      const title = document.createElement('div');
+      title.className = 'tmdb-title';
+      title.textContent = item.title + (item.year ? ' (' + item.year + ')' : '');
+      const badge = document.createElement('span');
+      badge.className = 'tmdb-badge';
+      badge.textContent = item.media_type;
+      title.appendChild(badge);
+
+      const ov = document.createElement('div');
+      ov.className = 'tmdb-overview';
+      ov.textContent = item.overview || '(暂无简介)';
+
+      meta.appendChild(title);
+      meta.appendChild(ov);
+      row.appendChild(meta);
+      resultsEl.appendChild(row);
+    });
+    resultsEl.hidden = false;
+  }
+
+  btn.addEventListener('click', function () {
+    const q = titleInput.value.trim();
+    if (!q) { setStatus('请先在标题里输入要搜索的名称'); return; }
+    setStatus('正在搜索 TMDB…');
+    resultsEl.hidden = true;
+    fetch('/api/tmdb-search?q=' + encodeURIComponent(q))
+      .then(function (resp) {
+        return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
+      })
+      .then(function (r) {
+        if (!r.ok || r.data.error) { setStatus(r.data.error || '搜索失败,请稍后重试'); return; }
+        const results = r.data.results || [];
+        if (results.length === 0) { setStatus('没有找到匹配的电影或剧集'); return; }
+        setStatus('');
+        renderResults(results);
+      })
+      .catch(function () { setStatus('网络异常,搜索失败,请稍后重试'); });
+  });
+})();
+</script>
 
 {% endblock %}
